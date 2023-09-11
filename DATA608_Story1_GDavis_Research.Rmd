@@ -1,0 +1,210 @@
+---
+title: "Data 608: Story 1: Infrastructure Investment & Jobs Act Funding Allocation"
+author: "Glen Dale Davis"
+date: "2023-09-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(RColorBrewer)
+library(httr)
+library(statebins)
+library(cowplot)
+library(CGPfunctions)
+
+
+```
+
+## Research
+
+```{r data, warning=FALSE, message=FALSE}
+fn1 <- "https://github.com/geedoubledee/data608_story1/raw/main/IIJA%20FUNDING%20AS%20OF%20MARCH%202023.xlsx"
+temp <- tempfile(fileext = ".xlsx")
+req <- GET(fn1, authenticate(Sys.getenv("GITHUB_PAT"), ""),
+           write_disk(path = temp))
+iija_funding <- readxl::read_excel(temp)
+unlink(temp)
+#correct spelling error
+iija_funding[9, 1] <- "DELAWARE"
+colnames(iija_funding) <- c("STATE", "FUNDING_BILLIONS")
+iija_funding <- cbind(state.abb[match(iija_funding$STATE, toupper(state.name))],
+                     iija_funding)
+colnames(iija_funding) <- c("ABBREV", "STATE", "FUNDING_BILLIONS")
+
+fn2 <- "https://raw.githubusercontent.com/geedoubledee/data608_story1/main/pop_est_agg.csv"
+pop_est_agg <- readr::read_csv(fn2)
+
+fund_vs_pop_df <- iija_funding |>
+    left_join(pop_est_agg, by = join_by(STATE)) |>
+    mutate(PER_PERSON_DOLLARS = round(FUNDING_BILLIONS * 1000000000 / POP_EST, 2),
+           BUCKET = as.factor(case_when(
+               PER_PERSON_DOLLARS < 500 ~ 500,
+               PER_PERSON_DOLLARS < 1000 ~ 1000,
+               PER_PERSON_DOLLARS < 1500 ~ 1500,
+               PER_PERSON_DOLLARS < 2000 ~ 2000,
+               PER_PERSON_DOLLARS < 2500 ~ 2500,
+               PER_PERSON_DOLLARS < 3000 ~ 3000,
+               PER_PERSON_DOLLARS < 3500 ~ 3500,
+               PER_PERSON_DOLLARS < 4000 ~ 4000,
+               PER_PERSON_DOLLARS < 4500 ~ 4500,
+               PER_PERSON_DOLLARS < 5000 ~ 5000,
+               PER_PERSON_DOLLARS >= 5000 ~ 5500
+               )),
+           PRESIDENT = as.factor(PRESIDENT),
+           REDIST_BILLIONS = NA,
+           DIFF_BILLIONS = NA) |>
+    arrange(PRESIDENT, STATE)
+
+split1 <- fund_vs_pop_df |>
+    filter(!is.na(ABBREV)) |>
+    mutate(
+        REDIST_BILLIONS = round(
+            (sum(FUNDING_BILLIONS) / sum(POP_EST)) * POP_EST, 4),
+        DIFF_BILLIONS = FUNDING_BILLIONS - REDIST_BILLIONS)
+
+split2 <- fund_vs_pop_df |>
+    filter(is.na(ABBREV))
+
+fund_vs_pop_df <- rbind(split1, split2)
+
+```
+
+```{r visualization0}
+p1 <- fund_vs_pop_df |>
+    filter(!is.na(ABBREV) & PRESIDENT == "Biden") |>
+    ggplot(aes(x = reorder(ABBREV, DIFF_BILLIONS, decreasing = FALSE),
+               y = DIFF_BILLIONS)) +
+    geom_col(fill = "#377EB8") + 
+    labs(x = "State", y = "Funding Allocated Beyond Unbiased Distribution") + 
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank()) + 
+    ylim(-5, 5) + 
+    coord_flip()
+p2 <- fund_vs_pop_df |>
+    filter(!is.na(ABBREV) & PRESIDENT == "Trump") |>
+    ggplot(aes(x = reorder(ABBREV, DIFF_BILLIONS, decreasing = FALSE),
+               y = DIFF_BILLIONS)) +
+    geom_col(fill = "#E41A1C") + 
+    labs(x = "State", y = "Funding Allocated Beyond Unbiased Distribution") + 
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank()) + 
+    ylim(-5, 5) + 
+    coord_flip()
+p1
+p2
+
+```
+
+```{r visualization1}
+p3 <- fund_vs_pop_df |>
+    filter(!is.na(ABBREV)) |>
+    ggplot() + 
+    geom_statebins(aes(state = ABBREV, fill = BUCKET)) +
+    coord_equal() +
+    theme_statebins(legend_position="right") +
+    scale_fill_brewer(palette = "PiYG") + 
+    labs(fill = "Funding Per Person (Dollars)",
+         title = "Infrastructure Investment & Jobs Act (IIJA) Funding Allocation")
+p3
+
+```
+
+```{r visualization2}
+p4 <- fund_vs_pop_df |>
+    filter(!is.na(ABBREV)) |>
+    select(-DIFF_BILLIONS) |>
+    pivot_longer(cols = ends_with("BILLIONS"), names_to = "FUNDING_CATEGORY",
+                 values_to = "FUNDING_VALUE_BILLIONS") |>
+    mutate(FUNDING_CATEGORY = case_when(
+        FUNDING_CATEGORY == "FUNDING_BILLIONS" ~ "Funding Allocated by Government",
+        FUNDING_CATEGORY == "REDIST_BILLIONS" ~ "Unbiased Redistribution")) |>
+    ggplot(aes(x = FUNDING_CATEGORY, y = FUNDING_VALUE_BILLIONS,
+               fill = PRESIDENT)) +
+    geom_col() + 
+    labs(x = "Funding Category", y = "Funding in Billions of Dollars") + 
+    scale_fill_brewer(palette = "Set1", direction = -1) + 
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank())
+p4
+
+```
+
+```{r visualization3}
+p5 <- fund_vs_pop_df |>
+    filter(!is.na(ABBREV) & PRESIDENT == "Biden") |>
+    ggplot() + 
+    geom_statebins(aes(state = ABBREV, fill = BUCKET)) +
+    coord_equal() +
+    theme_statebins(legend_position="right") +
+    scale_fill_brewer(palette = "Blues") + 
+    labs(fill = "Funding Per Person (Dollars)",
+         title = "IIJA Funding Allocation for Biden States")
+p6 <- fund_vs_pop_df |>
+    filter(!is.na(ABBREV) & PRESIDENT == "Trump") |>
+    ggplot() + 
+    geom_statebins(aes(state = ABBREV, fill = BUCKET)) +
+    coord_equal() +
+    theme_statebins(legend_position="right") +
+    scale_fill_brewer(palette = "Reds") + 
+    labs(fill = "Funding Per Person (Dollars)",
+         title = "IIJA Funding Allocation for Trump States")
+p5
+p6
+
+```
+
+```{r visualization4}
+summary_df <- fund_vs_pop_df |>
+    filter(!is.na(ABBREV)) |>
+    group_by(PRESIDENT) |>
+    summarize(TOTAL_FUNDING_BILLIONS = round(sum(FUNDING_BILLIONS), 0),
+              PER_PERSON_TOTAL = round((sum(FUNDING_BILLIONS) * 1000000000) / sum(POP_EST), 2))
+
+p7 <- summary_df |>
+    ggplot(aes(x = PRESIDENT, y = PER_PERSON_TOTAL,
+               fill = PRESIDENT)) +
+    geom_bar(stat = "identity", show.legend = FALSE) + 
+    geom_text(aes(label = PER_PERSON_TOTAL), size = 5, vjust = -0.25) + 
+    labs(x = "President", y = "Funding Per Person (Dollars)") + 
+    scale_fill_brewer(palette = "Set1", direction = -1) + 
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank())
+p7
+
+```
+
+```{r visualization5}
+p8 <- summary_df |>
+    ggplot(aes(x = PRESIDENT, y = TOTAL_FUNDING_BILLIONS,
+               fill = PRESIDENT)) +
+    geom_bar(stat = "identity", show.legend = FALSE) + 
+    geom_text(aes(label = TOTAL_FUNDING_BILLIONS), size = 5, vjust = -0.25) + 
+    labs(x = "President", y = "Total Funding (Billions)") + 
+    scale_fill_brewer(palette = "Set1", direction = -1) + 
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank())
+p8
+
+```
+
+```{r save}
+ggsave(plot = p1, filename = "p1.png", bg = "transparent")
+ggsave(plot = p2, filename = "p2.png", bg = "transparent")
+ggsave(plot = p3, filename = "p3.png", bg = "transparent")
+ggsave(plot = p4, filename = "p4.png", bg = "transparent")
+ggsave(plot = p5, filename = "p5.png", bg = "transparent")
+ggsave(plot = p6, filename = "p6.png", bg = "transparent")
+ggsave(plot = p7, filename = "p7.png", bg = "transparent")
+ggsave(plot = p8, filename = "p8.png", bg = "transparent")
+
+```
